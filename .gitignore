@@ -6,3 +6,7 @@
 *.order
 *.symvers
 .*.cmd
+
+# Copied source code in release and debug
+./release/*.c
+./debug/*.c

@@ -9,12 +9,12 @@ DDIR := $(CURDIR)/debug
 
 all:
 	mkdir -p $(RDIR)
-	cp -u hello.c $(RDIR)
+	cp -u sched_switch_hook.c $(RDIR)
 	$(MAKE) -C $(KDIR) M=$(RDIR) modules
 
 debug:
 	mkdir -p $(DDIR)
-	cp -u hello.c $(DDIR)
+	cp -u sched_switch_hook.c $(DDIR)
 	$(MAKE) -C $(KDIR) M=$(DDIR) modules
 
 clean:
