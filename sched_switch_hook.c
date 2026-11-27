@@ -7,8 +7,11 @@
 #include <linux/tracepoint.h>
 #include <linux/string.h>
 #include <linux/sched/clock.h>
+#include <linux/proc_fs.h>
+#include <linux/errno.h>
 
 #define MAX_ITEMS_CAPTURED 10000
+#define PROC_FILE_NAME "sched_capture"
 
 // Struct to hold the capture info
 struct event_info
@@ -20,24 +23,26 @@ struct event_info
     u64 current_time;
 };
 
+static const struct proc_ops file_operations = {};
+
 // Linear buffer that gets exposed to user program
 static struct event_info sched_switch_capture[MAX_ITEMS_CAPTURED];
 
 // Counter for linear buffer
 static atomic_t event_counter = ATOMIC_INIT(0);
 
-
 // Find the tracepoint and store it
 static struct tracepoint* current_tracepoint = NULL;
-static void find_tracepoint(struct tracepoint *tp,
-                              void *priv)
+static void find_tracepoint(struct tracepoint *tp, void *priv)
 {
     char *tracepoint_to_find = "sched_switch";
+
     if (!strcmp(tp->name, tracepoint_to_find))
-    {
         current_tracepoint = tp;
-    }
 }
+
+// Start/stop flag
+static atomic_t is_recording = ATOMIC_INIT(0);
 
 // Probe to get info during context switch
 static void handler(void* priv,
@@ -46,6 +51,8 @@ static void handler(void* priv,
                     struct task_struct *next,
                     unsigned int prev_state)
 {
+    if (!atomic_read(&is_recording)) return;
+
     int index = atomic_fetch_inc(&event_counter);
     if (index >= MAX_ITEMS_CAPTURED) return;
 
@@ -65,15 +72,29 @@ static int custom_init(void)
     if (current_tracepoint == NULL)
     {
         printk("Error : Unable to find the tracepoint\n");
-        return -1;
+        return -ENOENT;
     }
 
-    return tracepoint_probe_register(current_tracepoint, handler, NULL);
+    if(!proc_create(PROC_FILE_NAME, 0600, NULL, &file_operations))
+    {
+        printk("Error : Unable to create proc file\n");
+        return -ENOMEM;
+    }
+
+    int register_failed = tracepoint_probe_register(current_tracepoint, handler, NULL);
+
+    if(register_failed)
+    {
+        printk("Error : Tracepoint registration failed\n");
+        remove_proc_entry(PROC_FILE_NAME, NULL);
+        return register_failed;
+    }
+
+    return 0;
 }
 
 static void custom_exit(void)
 {
-    printk("Module ending...\n");
     tracepoint_probe_unregister(current_tracepoint, handler, NULL);
     tracepoint_synchronize_unregister();
 
@@ -82,15 +103,20 @@ static void custom_exit(void)
     else
         printk("Events recorded: %d\n", atomic_read(&event_counter));
 
-    for(int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; ++i)
+    {
         printk("Event %d: %s prev_pid: %d next_pid: %d state: %u time: %llu\n",
-            i,
-            sched_switch_capture[i].name,
-            sched_switch_capture[i].prev_pid,
-            sched_switch_capture[i].next_pid,
-            sched_switch_capture[i].state,
-            sched_switch_capture[i].current_time);
+                i,
+                sched_switch_capture[i].name,
+                sched_switch_capture[i].prev_pid,
+                sched_switch_capture[i].next_pid,
+                sched_switch_capture[i].state,
+                sched_switch_capture[i].current_time);
     }
+
+    remove_proc_entry(PROC_FILE_NAME, NULL);
+
+    printk("Module ending...\n");
 }
 
 module_init(custom_init);
